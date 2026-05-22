@@ -7,7 +7,7 @@ This project is a Next.js 16 app that previews a mattress-style material in 3D a
 The current implementation lives mainly in `app/page.tsx`.
 
 What works now:
-
+  
 - Renders a 3D mattress slab with Three.js.
 - Uses the black-and-white alpha image from `Matress_Type/B&W Alpha` as the texture pattern source.
 - Lets the user select multiple colors from the bottom swatch rail.
