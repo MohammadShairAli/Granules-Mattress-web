@@ -46,13 +46,13 @@ public/matress_type/
 Current copied files:
 
 ```text
-public/matress_type/alpha-mask.png
+public/matress_type/alpha-mask.jpeg
 public/matress_type/mattress.glb
 public/matress_type/normal.png
 public/matress_type/orm.png
 ```
 
-Important: the current viewer uses `alpha-mask.png` for the generated material. The GLB is copied and available, but the app currently renders a JS-created Three.js box geometry instead of loading the GLB.
+Important: the current viewer uses `alpha-mask.jpeg` for the generated material. The GLB is copied and available, but the app currently renders a JS-created Three.js box geometry instead of loading the GLB.
 
 ## Why The GLB Is Not Currently Used
 
@@ -68,7 +68,7 @@ The texture pipeline is designed to be fast.
 
 At startup:
 
-1. Load `/matress_type/alpha-mask.png`.
+1. Load `/matress_type/alpha-mask.jpeg`.
 2. Draw it once into an offscreen canvas.
 3. Read its grayscale pixel values into a `Uint8Array` mask.
 4. Create one reusable `ImageData`.

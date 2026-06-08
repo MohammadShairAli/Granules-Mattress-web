@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
-const ALPHA_PATH = "/matress_type/alpha-mask.png";
+const ALPHA_PATH = "/matress_type/alpha-mask.jpeg";
 const TEXTURE_SIZE = 640;
 const MATTRESS_WIDTH = 2.35;
 const MATTRESS_LENGTH = 1.55;
