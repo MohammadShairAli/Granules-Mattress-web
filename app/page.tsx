@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
-const ALPHA_PATH = "/matress_type/alpha-mask.jpeg";
 const ALBEDO_PATH = "/matress_type/melos_granules_albedo_upscaled_2048.png";
+const GRANULE_GUIDE_PATH = "/matress_type/melos_granules_displacement_2048.png";
 const MODEL_PATH = "/matress_type/Untitled.glb";
 const NORMAL_PATH = "/matress_type/melos_granules_normal_2048.png";
 const ROUGHNESS_PATH = "/matress_type/melos_granules_roughness_2048.png";
@@ -13,8 +13,10 @@ const MODEL_WIDTH = 2.2;
 const CAMERA_RADIUS = 3.5;
 const AUTO_ROTATE_SPEED = 0.05;
 const AUTO_ROTATE_RESUME_DELAY_MS = 1200;
-const GRANULE_MASK_THRESHOLD = 150;
+const GRANULE_MASK_THRESHOLD = 136;
 const GRANULE_SEED_THRESHOLD = 220;
+const GRANULE_GUIDE_SPLIT_THRESHOLD = 132;
+const GRANULE_GUIDE_SEED_THRESHOLD = 188;
 const GRANULE_EROSION_STEPS = 2;
 
 type ColorOption = {
@@ -43,10 +45,12 @@ type Rgb = {
 type TextureCache = {
   canvas: HTMLCanvasElement;
   context: CanvasRenderingContext2D;
+  depth: Uint8Array;
   grain: Uint8ClampedArray;
   granules: Uint32Array;
   imageData: ImageData;
   mask: Uint8Array;
+  normal: Uint8ClampedArray;
   size: number;
   texture: THREE.CanvasTexture;
 };
@@ -102,6 +106,47 @@ function shadeChannel(value: number, shade: number) {
   return Math.max(0, Math.min(255, Math.round(value * shade)));
 }
 
+function mixChannel(from: number, to: number, amount: number) {
+  return Math.round(from + (to - from) * amount);
+}
+
+function gradientColor(option: Rgb, amount: number) {
+  const shadow = 0.2;
+  const highlight = 0.08;
+
+  return {
+    r:
+      amount < 0.5
+        ? mixChannel(option.r, 0, shadow * (1 - amount * 2))
+        : mixChannel(option.r, 255, highlight * ((amount - 0.5) * 2)),
+    g:
+      amount < 0.5
+        ? mixChannel(option.g, 0, shadow * (1 - amount * 2))
+        : mixChannel(option.g, 255, highlight * ((amount - 0.5) * 2)),
+    b:
+      amount < 0.5
+        ? mixChannel(option.b, 0, shadow * (1 - amount * 2))
+        : mixChannel(option.b, 255, highlight * ((amount - 0.5) * 2)),
+  };
+}
+
+function normalDetailShade(normal: Uint8ClampedArray, target: number) {
+  const nx = normal[target] / 127.5 - 1;
+  const ny = normal[target + 1] / 127.5 - 1;
+  const nz = normal[target + 2] / 127.5 - 1;
+  const sideLight = nx * -0.26 + ny * 0.24 + (nz - 0.72) * 0.24;
+
+  return Math.max(0, Math.min(1, 0.44 + sideLight));
+}
+
+function colorPreviewGradient(hex: string) {
+  return [
+    "radial-gradient(circle at 20% 20%, rgba(255,255,255,.42), transparent 24%)",
+    "radial-gradient(circle at 76% 78%, rgba(0,0,0,.26), transparent 28%)",
+    `linear-gradient(135deg, ${hex} 0%, ${hex} 42%, rgba(255,255,255,.22) 68%, rgba(0,0,0,.2) 100%)`,
+  ].join(", ");
+}
+
 function seededNoise(index: number) {
   let value = index >>> 0;
   value ^= value >>> 16;
@@ -112,18 +157,26 @@ function seededNoise(index: number) {
   return (value >>> 0) / 4294967295;
 }
 
-function buildGranuleMap(mask: Uint8Array, size: number) {
+function buildGranuleMap(mask: Uint8Array, guide: Uint8Array, size: number) {
   const foreground = new Uint8Array(mask.length);
   const seeds = new Uint8Array(mask.length);
   const granules = new Uint32Array(mask.length);
   const queue = new Uint32Array(mask.length);
 
   for (let index = 0; index < mask.length; index += 1) {
-    if (mask[index] >= GRANULE_MASK_THRESHOLD) {
+    const isGranule = mask[index] >= GRANULE_MASK_THRESHOLD;
+    const isGuideSplit = guide[index] <= GRANULE_GUIDE_SPLIT_THRESHOLD;
+
+    if (mask[index] > 0) {
       foreground[index] = 1;
     }
 
-    if (mask[index] >= GRANULE_SEED_THRESHOLD) {
+    if (
+      isGranule &&
+      !isGuideSplit &&
+      mask[index] >= GRANULE_SEED_THRESHOLD &&
+      guide[index] >= GRANULE_GUIDE_SEED_THRESHOLD
+    ) {
       seeds[index] = 1;
     }
   }
@@ -240,12 +293,44 @@ function buildGranuleMap(mask: Uint8Array, size: number) {
     }
   }
 
-  for (let index = 0; index < foreground.length; index += 1) {
-    if (foreground[index] === 0 || granules[index] !== 0) {
+  for (let index = 0; index < granules.length; index += 1) {
+    if (granules[index] !== 0) {
       continue;
     }
 
+    let head = 0;
+    let tail = 0;
+    queue[tail] = index;
+    tail += 1;
     granules[index] = componentId;
+
+    while (head < tail) {
+      const current = queue[head];
+      head += 1;
+
+      const x = current % size;
+      const y = Math.floor(current / size);
+      const neighbors = [
+        x > 0 ? current - 1 : -1,
+        x < size - 1 ? current + 1 : -1,
+        y > 0 ? current - size : -1,
+        y < size - 1 ? current + size : -1,
+      ];
+
+      for (const neighbor of neighbors) {
+        if (
+          neighbor < 0 ||
+          granules[neighbor] !== 0
+        ) {
+          continue;
+        }
+
+        granules[neighbor] = componentId;
+        queue[tail] = neighbor;
+        tail += 1;
+      }
+    }
+
     componentId += 1;
   }
 
@@ -285,17 +370,20 @@ function gltfFromSource(loader: GLTFLoader, src: string) {
 }
 
 async function createTextureCache() {
-  const [alphaImage, albedoImage] = await Promise.all([
-    imageFromSource(ALPHA_PATH),
+  const [albedoImage, guideImage, normalImage] = await Promise.all([
     imageFromSource(ALBEDO_PATH),
+    imageFromSource(GRANULE_GUIDE_PATH),
+    imageFromSource(NORMAL_PATH),
   ]);
   const size = Math.min(
     2048,
     Math.max(
-      alphaImage.naturalWidth,
-      alphaImage.naturalHeight,
       albedoImage.naturalWidth,
       albedoImage.naturalHeight,
+      guideImage.naturalWidth,
+      guideImage.naturalHeight,
+      normalImage.naturalWidth,
+      normalImage.naturalHeight,
     ),
   );
   const canvas = document.createElement("canvas");
@@ -309,23 +397,32 @@ async function createTextureCache() {
 
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
-  context.drawImage(alphaImage, 0, 0, size, size);
-
-  const alphaData = context.getImageData(0, 0, size, size);
+  context.drawImage(guideImage, 0, 0, size, size);
+  const guideData = context.getImageData(0, 0, size, size);
+  const guide = new Uint8Array(size * size);
   const mask = new Uint8Array(size * size);
 
-  for (let index = 0; index < mask.length; index += 1) {
+  for (let index = 0; index < guide.length; index += 1) {
     const sourceIndex = index * 4;
 
-    mask[index] = Math.round(
-      (alphaData.data[sourceIndex] +
-        alphaData.data[sourceIndex + 1] +
-        alphaData.data[sourceIndex + 2]) /
+    const value = Math.round(
+      (guideData.data[sourceIndex] +
+        guideData.data[sourceIndex + 1] +
+        guideData.data[sourceIndex + 2]) /
         3,
     );
+
+    guide[index] = value;
+    mask[index] = value;
   }
 
-  const granules = buildGranuleMap(mask, size);
+  const granules = buildGranuleMap(mask, guide, size);
+
+  context.clearRect(0, 0, size, size);
+  context.drawImage(normalImage, 0, 0, size, size);
+  const normal = new Uint8ClampedArray(
+    context.getImageData(0, 0, size, size).data,
+  );
 
   context.clearRect(0, 0, size, size);
   context.drawImage(albedoImage, 0, 0, size, size);
@@ -346,10 +443,12 @@ async function createTextureCache() {
   return {
     canvas,
     context,
+    depth: guide,
     grain,
     granules,
     imageData,
     mask,
+    normal,
     size,
     texture,
   };
@@ -370,6 +469,19 @@ function repaintTexture(cache: TextureCache, selectedColors: SelectedColor[]) {
     cumulativeWeights.push(cumulativeWeight);
   }
 
+  const pickWeightedColor = (roll: number) => {
+    let picked = rgbColors[0];
+
+    for (let colorIndex = 0; colorIndex < rgbColors.length; colorIndex += 1) {
+      picked = rgbColors[colorIndex];
+      if (roll <= cumulativeWeights[colorIndex]) {
+        break;
+      }
+    }
+
+    return picked;
+  };
+
   const pixels = cache.imageData.data;
 
   for (let index = 0; index < cache.mask.length; index += 1) {
@@ -380,31 +492,27 @@ function repaintTexture(cache: TextureCache, selectedColors: SelectedColor[]) {
       (cache.grain[target] + cache.grain[target + 1] + cache.grain[target + 2]) /
       765;
 
-    if (granule === 0) {
-      const seamShade = 0.08 + sourceShade * 0.32;
-      pixels[target] = shadeChannel(40, seamShade);
-      pixels[target + 1] = shadeChannel(40, seamShade);
-      pixels[target + 2] = shadeChannel(40, seamShade);
-      pixels[target + 3] = 255;
-      continue;
-    }
-
     const roll = seededNoise(granule * 2654435761) * totalWeight;
-    let picked = rgbColors[0];
+    const picked = pickWeightedColor(roll);
 
-    for (let colorIndex = 0; colorIndex < rgbColors.length; colorIndex += 1) {
-      picked = rgbColors[colorIndex];
-      if (roll <= cumulativeWeights[colorIndex]) {
-        break;
-      }
-    }
+    const noise = seededNoise(granule * 1597334677 + 593) * 0.04;
+    const heightShade = cache.depth[index] / 255;
+    const normalShade = normalDetailShade(cache.normal, target);
+    const tint = gradientColor(
+      picked,
+      sourceShade * 0.58 + heightShade * 0.26 + normalShade * 0.16,
+    );
+    const shade =
+      0.2 +
+      sourceShade * 0.52 +
+      heightShade * 0.12 +
+      normalShade * 0.1 +
+      mask * 0.07 +
+      noise;
 
-    const noise = seededNoise(granule * 1597334677 + 593) * 0.05;
-    const shade = 0.33 + sourceShade * 0.8 + mask * 0.24 + noise;
-
-    pixels[target] = shadeChannel(picked.r, shade);
-    pixels[target + 1] = shadeChannel(picked.g, shade);
-    pixels[target + 2] = shadeChannel(picked.b, shade);
+    pixels[target] = shadeChannel(tint.r, shade);
+    pixels[target + 1] = shadeChannel(tint.g, shade);
+    pixels[target + 2] = shadeChannel(tint.b, shade);
     pixels[target + 3] = 255;
   }
 
@@ -634,13 +742,14 @@ export default function Home() {
 
         const textureLoader = new THREE.TextureLoader();
         const gltfLoader = new GLTFLoader();
-        const [model, normalMap, roughnessMap] = await Promise.all([
+        const [model, normalMap, roughnessMap, depthMap] = await Promise.all([
           gltfFromSource(gltfLoader, MODEL_PATH),
           textureFromSource(textureLoader, NORMAL_PATH),
           textureFromSource(textureLoader, ROUGHNESS_PATH),
+          textureFromSource(textureLoader, GRANULE_GUIDE_PATH),
         ]);
 
-        for (const supportMap of [normalMap, roughnessMap]) {
+        for (const supportMap of [normalMap, roughnessMap, depthMap]) {
           supportMap.flipY = false;
           supportMap.wrapS = THREE.RepeatWrapping;
           supportMap.wrapT = THREE.RepeatWrapping;
@@ -649,9 +758,12 @@ export default function Home() {
 
         normalMap.colorSpace = THREE.NoColorSpace;
         roughnessMap.colorSpace = THREE.NoColorSpace;
+        depthMap.colorSpace = THREE.NoColorSpace;
         material.normalMap = normalMap;
-        material.normalScale.set(0.38, 0.38);
+        material.normalScale.set(0.45, 0.45);
         material.roughnessMap = roughnessMap;
+        material.bumpMap = depthMap;
+        material.bumpScale = 0.04;
 
         layModelFlat(model);
         fitModelToView(model);
@@ -685,6 +797,7 @@ export default function Home() {
           cleanup: () => {
             normalMap.dispose();
             roughnessMap.dispose();
+            depthMap.dispose();
             model.traverse((child) => {
               if (child instanceof THREE.Mesh) {
                 child.geometry.dispose();
@@ -979,8 +1092,7 @@ export default function Home() {
                 className="block h-full w-full"
                 style={{
                   backgroundColor: option.hex,
-                  backgroundImage:
-                    "radial-gradient(circle at 20% 25%, rgba(255,255,255,.24), transparent 16%), radial-gradient(circle at 72% 30%, rgba(0,0,0,.18), transparent 18%), radial-gradient(circle at 44% 70%, rgba(255,255,255,.16), transparent 16%)",
+                  backgroundImage: colorPreviewGradient(option.hex),
                 }}
               />
               {active ? (
