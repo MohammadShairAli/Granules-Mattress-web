@@ -2,12 +2,20 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 const ALPHA_PATH = "/matress_type/alpha-mask.jpeg";
-const TEXTURE_SIZE = 640;
-const MATTRESS_WIDTH = 2.35;
-const MATTRESS_LENGTH = 1.55;
-const MATTRESS_DEPTH = 0.16;
+const ALBEDO_PATH = "/matress_type/melos_granules_albedo_upscaled_2048.png";
+const MODEL_PATH = "/matress_type/Untitled.glb";
+const NORMAL_PATH = "/matress_type/melos_granules_normal_2048.png";
+const ROUGHNESS_PATH = "/matress_type/melos_granules_roughness_2048.png";
+const MODEL_WIDTH = 2.2;
+const CAMERA_RADIUS = 3.5;
+const AUTO_ROTATE_SPEED = 0.05;
+const AUTO_ROTATE_RESUME_DELAY_MS = 1200;
+const GRANULE_MASK_THRESHOLD = 150;
+const GRANULE_SEED_THRESHOLD = 220;
+const GRANULE_EROSION_STEPS = 2;
 
 type ColorOption = {
   id: string;
@@ -21,6 +29,11 @@ type SelectedColor = ColorOption & {
   weight: number;
 };
 
+type ModelMaterialEntry = {
+  material: THREE.Material | THREE.Material[];
+  mesh: THREE.Mesh;
+};
+
 type Rgb = {
   r: number;
   g: number;
@@ -30,14 +43,20 @@ type Rgb = {
 type TextureCache = {
   canvas: HTMLCanvasElement;
   context: CanvasRenderingContext2D;
+  grain: Uint8ClampedArray;
+  granules: Uint32Array;
   imageData: ImageData;
   mask: Uint8Array;
+  size: number;
   texture: THREE.CanvasTexture;
 };
 
 type Viewer = {
   camera: THREE.PerspectiveCamera;
+  cleanup: () => void;
   material: THREE.MeshStandardMaterial;
+  model: THREE.Object3D;
+  originalMaterials: ModelMaterialEntry[];
   renderer: THREE.WebGLRenderer;
   resize: () => void;
   scene: THREE.Scene;
@@ -66,11 +85,7 @@ const PALETTE: ColorOption[] = [
   { id: "olive", name: "Olive", ral: "6013", code: "46 9950", hex: "#42602f" },
 ];
 
-const INITIAL_SELECTION = [
-  { ...PALETTE[0], weight: 1 },
-  { ...PALETTE[8], weight: 1 },
-  { ...PALETTE[10], weight: 1 },
-];
+const INITIAL_SELECTION: SelectedColor[] = [];
 
 function hexToRgb(hex: string): Rgb {
   const value = hex.replace("#", "");
@@ -88,8 +103,153 @@ function shadeChannel(value: number, shade: number) {
 }
 
 function seededNoise(index: number) {
-  const seed = Math.sin(index * 12.9898 + 78.233) * 43758.5453;
-  return seed - Math.floor(seed);
+  let value = index >>> 0;
+  value ^= value >>> 16;
+  value = Math.imul(value, 0x7feb352d);
+  value ^= value >>> 15;
+  value = Math.imul(value, 0x846ca68b);
+  value ^= value >>> 16;
+  return (value >>> 0) / 4294967295;
+}
+
+function buildGranuleMap(mask: Uint8Array, size: number) {
+  const foreground = new Uint8Array(mask.length);
+  const seeds = new Uint8Array(mask.length);
+  const granules = new Uint32Array(mask.length);
+  const queue = new Uint32Array(mask.length);
+
+  for (let index = 0; index < mask.length; index += 1) {
+    if (mask[index] >= GRANULE_MASK_THRESHOLD) {
+      foreground[index] = 1;
+    }
+
+    if (mask[index] >= GRANULE_SEED_THRESHOLD) {
+      seeds[index] = 1;
+    }
+  }
+
+  for (let step = 0; step < GRANULE_EROSION_STEPS; step += 1) {
+    const nextSeeds = new Uint8Array(mask.length);
+
+    for (let index = 0; index < seeds.length; index += 1) {
+      if (seeds[index] === 0) {
+        continue;
+      }
+
+      const x = index % size;
+      const y = Math.floor(index / size);
+      const left = x > 0 ? index - 1 : -1;
+      const right = x < size - 1 ? index + 1 : -1;
+      const up = y > 0 ? index - size : -1;
+      const down = y < size - 1 ? index + size : -1;
+
+      if (
+        left >= 0 &&
+        right >= 0 &&
+        up >= 0 &&
+        down >= 0 &&
+        seeds[left] === 1 &&
+        seeds[right] === 1 &&
+        seeds[up] === 1 &&
+        seeds[down] === 1
+      ) {
+        nextSeeds[index] = 1;
+      }
+    }
+
+    seeds.set(nextSeeds);
+  }
+
+  let componentId = 1;
+
+  for (let index = 0; index < seeds.length; index += 1) {
+    if (seeds[index] === 0 || granules[index] !== 0) {
+      continue;
+    }
+
+    let head = 0;
+    let tail = 0;
+    queue[tail] = index;
+    tail += 1;
+    granules[index] = componentId;
+
+    while (head < tail) {
+      const current = queue[head];
+      head += 1;
+
+      const x = current % size;
+      const y = Math.floor(current / size);
+      const neighbors = [
+        x > 0 ? current - 1 : -1,
+        x < size - 1 ? current + 1 : -1,
+        y > 0 ? current - size : -1,
+        y < size - 1 ? current + size : -1,
+      ];
+
+      for (const neighbor of neighbors) {
+        if (neighbor < 0 || seeds[neighbor] === 0 || granules[neighbor] !== 0) {
+          continue;
+        }
+
+        granules[neighbor] = componentId;
+        queue[tail] = neighbor;
+        tail += 1;
+      }
+    }
+
+    componentId += 1;
+  }
+
+  let head = 0;
+  let tail = 0;
+
+  for (let index = 0; index < granules.length; index += 1) {
+    if (granules[index] === 0) {
+      continue;
+    }
+
+    queue[tail] = index;
+    tail += 1;
+  }
+
+  while (head < tail) {
+    const current = queue[head];
+    head += 1;
+
+    const x = current % size;
+    const y = Math.floor(current / size);
+    const neighbors = [
+      x > 0 ? current - 1 : -1,
+      x < size - 1 ? current + 1 : -1,
+      y > 0 ? current - size : -1,
+      y < size - 1 ? current + size : -1,
+    ];
+
+    for (const neighbor of neighbors) {
+      if (
+        neighbor < 0 ||
+        foreground[neighbor] === 0 ||
+        granules[neighbor] !== 0
+      ) {
+        continue;
+      }
+
+      granules[neighbor] = granules[current];
+      queue[tail] = neighbor;
+      tail += 1;
+    }
+  }
+
+  for (let index = 0; index < foreground.length; index += 1) {
+    if (foreground[index] === 0 || granules[index] !== 0) {
+      continue;
+    }
+
+    granules[index] = componentId;
+    componentId += 1;
+  }
+
+  return granules;
 }
 
 async function imageFromSource(src: string) {
@@ -105,24 +265,58 @@ async function imageFromSource(src: string) {
   return image;
 }
 
+function textureFromSource(loader: THREE.TextureLoader, src: string) {
+  return new Promise<THREE.Texture>((resolve, reject) => {
+    loader.load(src, resolve, undefined, () => {
+      reject(new Error(`Could not load ${src}`));
+    });
+  });
+}
+
+function gltfFromSource(loader: GLTFLoader, src: string) {
+  return new Promise<THREE.Group>((resolve, reject) => {
+    loader.load(
+      src,
+      (gltf) => resolve(gltf.scene),
+      undefined,
+      () => reject(new Error(`Could not load ${src}`)),
+    );
+  });
+}
+
 async function createTextureCache() {
-  const alphaImage = await imageFromSource(ALPHA_PATH);
+  const [alphaImage, albedoImage] = await Promise.all([
+    imageFromSource(ALPHA_PATH),
+    imageFromSource(ALBEDO_PATH),
+  ]);
+  const size = Math.min(
+    2048,
+    Math.max(
+      alphaImage.naturalWidth,
+      alphaImage.naturalHeight,
+      albedoImage.naturalWidth,
+      albedoImage.naturalHeight,
+    ),
+  );
   const canvas = document.createElement("canvas");
-  canvas.width = TEXTURE_SIZE;
-  canvas.height = TEXTURE_SIZE;
+  canvas.width = size;
+  canvas.height = size;
 
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) {
     throw new Error("Canvas is not available in this browser.");
   }
 
-  context.drawImage(alphaImage, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(alphaImage, 0, 0, size, size);
 
-  const alphaData = context.getImageData(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
-  const mask = new Uint8Array(TEXTURE_SIZE * TEXTURE_SIZE);
+  const alphaData = context.getImageData(0, 0, size, size);
+  const mask = new Uint8Array(size * size);
 
   for (let index = 0; index < mask.length; index += 1) {
     const sourceIndex = index * 4;
+
     mask[index] = Math.round(
       (alphaData.data[sourceIndex] +
         alphaData.data[sourceIndex + 1] +
@@ -131,16 +325,32 @@ async function createTextureCache() {
     );
   }
 
-  const imageData = context.createImageData(TEXTURE_SIZE, TEXTURE_SIZE);
+  const granules = buildGranuleMap(mask, size);
+
+  context.clearRect(0, 0, size, size);
+  context.drawImage(albedoImage, 0, 0, size, size);
+  const grain = new Uint8ClampedArray(
+    context.getImageData(0, 0, size, size).data,
+  );
+
+  const imageData = context.createImageData(size, size);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.flipY = false;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
 
   return {
     canvas,
     context,
+    grain,
+    granules,
     imageData,
     mask,
+    size,
     texture,
   };
 }
@@ -152,28 +362,45 @@ function repaintTexture(cache: TextureCache, selectedColors: SelectedColor[]) {
     weight: Math.max(1, color.weight),
   }));
   const totalWeight = rgbColors.reduce((total, color) => total + color.weight, 0);
+  const cumulativeWeights: number[] = [];
+  let cumulativeWeight = 0;
+
+  for (const color of rgbColors) {
+    cumulativeWeight += color.weight;
+    cumulativeWeights.push(cumulativeWeight);
+  }
+
   const pixels = cache.imageData.data;
 
   for (let index = 0; index < cache.mask.length; index += 1) {
-    const x = index % TEXTURE_SIZE;
-    const y = Math.floor(index / TEXTURE_SIZE);
-    const flake = Math.floor(x / 3) + Math.floor(y / 3) * 997;
-    let roll = seededNoise(flake) * totalWeight;
+    const granule = cache.granules[index];
+    const target = index * 4;
+    const mask = cache.mask[index] / 255;
+    const sourceShade =
+      (cache.grain[target] + cache.grain[target + 1] + cache.grain[target + 2]) /
+      765;
+
+    if (granule === 0) {
+      const seamShade = 0.08 + sourceShade * 0.32;
+      pixels[target] = shadeChannel(40, seamShade);
+      pixels[target + 1] = shadeChannel(40, seamShade);
+      pixels[target + 2] = shadeChannel(40, seamShade);
+      pixels[target + 3] = 255;
+      continue;
+    }
+
+    const roll = seededNoise(granule * 2654435761) * totalWeight;
     let picked = rgbColors[0];
 
-    for (const color of rgbColors) {
-      roll -= color.weight;
-      picked = color;
-
-      if (roll <= 0) {
+    for (let colorIndex = 0; colorIndex < rgbColors.length; colorIndex += 1) {
+      picked = rgbColors[colorIndex];
+      if (roll <= cumulativeWeights[colorIndex]) {
         break;
       }
     }
 
-    const mask = cache.mask[index] / 255;
-    const grain = seededNoise(flake + 593) * 0.1;
-    const shade = 0.5 + mask * 0.74 + grain;
-    const target = index * 4;
+    const noise = seededNoise(granule * 1597334677 + 593) * 0.05;
+    const shade = 0.33 + sourceShade * 0.8 + mask * 0.24 + noise;
 
     pixels[target] = shadeChannel(picked.r, shade);
     pixels[target + 1] = shadeChannel(picked.g, shade);
@@ -183,6 +410,95 @@ function repaintTexture(cache: TextureCache, selectedColors: SelectedColor[]) {
 
   cache.context.putImageData(cache.imageData, 0, 0);
   cache.texture.needsUpdate = true;
+}
+
+function layModelFlat(model: THREE.Object3D) {
+  const bounds = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  bounds.getSize(size);
+
+  const thinnestAxis =
+    size.x <= size.y && size.x <= size.z ? "x" : size.y <= size.z ? "y" : "z";
+
+  if (thinnestAxis === "x") {
+    model.rotation.y = Math.PI / 2;
+  } else if (thinnestAxis === "y") {
+    model.rotation.x = Math.PI / 2;
+  }
+
+  model.updateMatrixWorld(true);
+}
+
+function fitModelToView(model: THREE.Object3D) {
+  let bounds = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+
+  bounds.getSize(size);
+  const largestSide = Math.max(size.x, size.y, size.z);
+  if (largestSide > 0) {
+    model.scale.setScalar(MODEL_WIDTH / largestSide);
+  }
+
+  model.updateMatrixWorld(true);
+  bounds = new THREE.Box3().setFromObject(model);
+  bounds.getCenter(center);
+
+  model.position.x -= center.x;
+  model.position.y -= center.y;
+
+  model.updateMatrixWorld(true);
+  bounds = new THREE.Box3().setFromObject(model);
+  model.position.z -= bounds.min.z;
+  model.updateMatrixWorld(true);
+}
+
+function getModelMaterials(model: THREE.Object3D) {
+  const entries: ModelMaterialEntry[] = [];
+
+  model.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) {
+      return;
+    }
+
+    entries.push({
+      material: child.material,
+      mesh: child,
+    });
+  });
+
+  return entries;
+}
+
+function applyMaterialToModel(model: THREE.Object3D, material: THREE.Material) {
+  model.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) {
+      return;
+    }
+
+    child.material = material;
+    child.castShadow = true;
+    child.receiveShadow = true;
+  });
+}
+
+function setModelShadowFlags(model: THREE.Object3D) {
+  model.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) {
+      return;
+    }
+
+    child.castShadow = true;
+    child.receiveShadow = true;
+  });
+}
+
+function restoreModelMaterials(entries: ModelMaterialEntry[]) {
+  for (const entry of entries) {
+    entry.mesh.material = entry.material;
+    entry.mesh.castShadow = true;
+    entry.mesh.receiveShadow = true;
+  }
 }
 
 function getPercent(color: SelectedColor, colors: SelectedColor[]) {
@@ -196,11 +512,17 @@ export default function Home() {
   const viewerRef = useRef<Viewer | null>(null);
   const dragRef = useRef({ dragging: false, x: 0, y: 0 });
   const orbitRef = useRef({ yaw: -0.55, pitch: 0.46 });
+  const autoRotateRef = useRef({
+    active: true,
+    baseYaw: -0.55,
+    resumeAt: 0,
+    start: 0,
+  });
   const selectedRef = useRef<SelectedColor[]>(INITIAL_SELECTION);
 
   const [selectedColors, setSelectedColors] =
     useState<SelectedColor[]>(INITIAL_SELECTION);
-  const [activeId, setActiveId] = useState(INITIAL_SELECTION[1].id);
+  const [activeId, setActiveId] = useState("");
   const [status, setStatus] = useState("Loading");
 
   const activeColor = useMemo(
@@ -220,7 +542,7 @@ export default function Home() {
       return;
     }
 
-    const radius = 2.7;
+    const radius = CAMERA_RADIUS;
     const pitch = orbitRef.current.pitch;
     const yaw = orbitRef.current.yaw;
     const flatRadius = Math.cos(pitch) * radius;
@@ -237,13 +559,23 @@ export default function Home() {
     const cache = cacheRef.current;
     const viewer = viewerRef.current;
 
-    if (!cache || !viewer) {
+    if (!viewer) {
+      return;
+    }
+
+    if (colors.length === 0) {
+      restoreModelMaterials(viewer.originalMaterials);
+      return;
+    }
+
+    if (!cache) {
       return;
     }
 
     repaintTexture(cache, colors);
     viewer.material.map = cache.texture;
     viewer.material.needsUpdate = true;
+    applyMaterialToModel(viewer.model, viewer.material);
   }, []);
 
   useEffect(() => {
@@ -269,7 +601,7 @@ export default function Home() {
           alpha: true,
           canvas: renderCanvas,
         });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2.5));
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         renderer.shadowMap.enabled = true;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -286,6 +618,8 @@ export default function Home() {
         keyLight.position.set(-1.8, -3.2, 4.2);
         keyLight.castShadow = true;
         keyLight.shadow.mapSize.set(2048, 2048);
+        keyLight.shadow.bias = -0.0002;
+        keyLight.shadow.normalBias = 0.02;
         scene.add(keyLight);
 
         const fillLight = new THREE.DirectionalLight("#ffffff", 1.6);
@@ -295,26 +629,41 @@ export default function Home() {
         const material = new THREE.MeshStandardMaterial({
           color: "#ffffff",
           metalness: 0.02,
-          roughness: 0.58,
+          roughness: 0.72,
         });
-        const geometry = new THREE.BoxGeometry(
-          MATTRESS_WIDTH,
-          MATTRESS_LENGTH,
-          MATTRESS_DEPTH,
-          2,
-          2,
-          1,
-        );
-        const mattress = new THREE.Mesh(geometry, material);
-        mattress.castShadow = true;
-        mattress.receiveShadow = true;
-        scene.add(mattress);
+
+        const textureLoader = new THREE.TextureLoader();
+        const gltfLoader = new GLTFLoader();
+        const [model, normalMap, roughnessMap] = await Promise.all([
+          gltfFromSource(gltfLoader, MODEL_PATH),
+          textureFromSource(textureLoader, NORMAL_PATH),
+          textureFromSource(textureLoader, ROUGHNESS_PATH),
+        ]);
+
+        for (const supportMap of [normalMap, roughnessMap]) {
+          supportMap.flipY = false;
+          supportMap.wrapS = THREE.RepeatWrapping;
+          supportMap.wrapT = THREE.RepeatWrapping;
+          supportMap.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        }
+
+        normalMap.colorSpace = THREE.NoColorSpace;
+        roughnessMap.colorSpace = THREE.NoColorSpace;
+        material.normalMap = normalMap;
+        material.normalScale.set(0.38, 0.38);
+        material.roughnessMap = roughnessMap;
+
+        layModelFlat(model);
+        fitModelToView(model);
+        setModelShadowFlags(model);
+        const originalMaterials = getModelMaterials(model);
+        scene.add(model);
 
         const shadow = new THREE.Mesh(
           new THREE.PlaneGeometry(4, 3),
           new THREE.ShadowMaterial({ opacity: 0.18 }),
         );
-        shadow.position.z = -MATTRESS_DEPTH / 2 - 0.015;
+        shadow.position.z = -0.01;
         shadow.receiveShadow = true;
         scene.add(shadow);
 
@@ -333,34 +682,63 @@ export default function Home() {
 
         viewerRef.current = {
           camera,
+          cleanup: () => {
+            normalMap.dispose();
+            roughnessMap.dispose();
+            model.traverse((child) => {
+              if (child instanceof THREE.Mesh) {
+                child.geometry.dispose();
+              }
+            });
+          },
           material,
+          model,
+          originalMaterials,
           renderer,
           resize,
           scene,
         };
 
         cacheRef.current = await createTextureCache();
+        cacheRef.current.texture.anisotropy =
+          renderer.capabilities.getMaxAnisotropy();
 
         if (!active) {
           return;
         }
 
+        autoRotateRef.current.start = performance.now();
         applyTexture(selectedRef.current);
         updateCamera();
         setStatus("Ready");
 
-        const render = () => {
+        const render = (time: number) => {
+          if (autoRotateRef.current.active) {
+            if (autoRotateRef.current.resumeAt !== 0 && time < autoRotateRef.current.resumeAt) {
+              orbitRef.current.yaw = autoRotateRef.current.baseYaw;
+            } else {
+              if (autoRotateRef.current.resumeAt !== 0) {
+                autoRotateRef.current.resumeAt = 0;
+                autoRotateRef.current.start = time;
+              }
+
+            orbitRef.current.yaw =
+                autoRotateRef.current.baseYaw +
+                Math.sin((time - autoRotateRef.current.start) * 0.001 * AUTO_ROTATE_SPEED) * 0.35;
+            }
+          }
+
           updateCamera();
           renderer.render(scene, camera);
           frame = window.requestAnimationFrame(render);
         };
 
-        render();
+        render(performance.now());
 
         return () => {
           window.removeEventListener("resize", resize);
           cacheRef.current?.texture.dispose();
-          geometry.dispose();
+          viewerRef.current?.cleanup();
           material.dispose();
           renderer.dispose();
         };
@@ -421,6 +799,7 @@ export default function Home() {
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    autoRotateRef.current.active = false;
     dragRef.current = {
       dragging: true,
       x: event.clientX,
@@ -450,6 +829,10 @@ export default function Home() {
 
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
     dragRef.current.dragging = false;
+    autoRotateRef.current.active = true;
+    autoRotateRef.current.baseYaw = orbitRef.current.yaw;
+    autoRotateRef.current.resumeAt =
+      performance.now() + AUTO_ROTATE_RESUME_DELAY_MS;
     event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
