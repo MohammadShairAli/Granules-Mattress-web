@@ -15,3 +15,22 @@ body {
   width: 0;
   display: none;
 }
+
+.selected-colors-scroll {
+  scrollbar-color: #a3a3a3 #f5f5f5;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.selected-colors-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.selected-colors-scroll::-webkit-scrollbar-track {
+  background: #f5f5f5;
+}
+
+.selected-colors-scroll::-webkit-scrollbar-thumb {
+  background: #a3a3a3;
+  border: 2px solid #f5f5f5;
+}

@@ -975,7 +975,7 @@ export default function Home() {
         onPointerUp={handlePointerUp}
       />
 
-      <div className="absolute bottom-28 left-0 z-20 w-48 bg-white/90 text-sm text-neutral-400 backdrop-blur">
+      <div className="absolute bottom-24 left-0 z-20 w-48 bg-white text-sm text-neutral-400">
         <button
           aria-expanded={selectedPanelOpen}
           className="flex w-full items-center justify-between border-y border-neutral-200 px-2 py-2 text-left"
@@ -994,11 +994,32 @@ export default function Home() {
       </div>
 
       {selectedPanelOpen && selectedColors.length > 0 ? (
-        <section className="absolute bottom-36 left-0 z-30 w-[440px] max-w-[calc(100vw-20px)] border border-neutral-200 bg-white/95 shadow-sm backdrop-blur">
-          <div className="max-h-44 space-y-3 overflow-y-auto px-3 py-4">
+        <section className="absolute bottom-32 left-0 z-30 w-[420px] max-w-[calc(100vw-20px)] border border-neutral-200 bg-white shadow-sm">
+          <div className="flex h-9 items-center border-b border-neutral-200 text-sm">
+            <div className="min-w-0 flex-1 px-2 text-neutral-700">
+              Ausgewaehlte Farben
+            </div>
+            <button
+              className="h-full bg-orange-500 px-3 text-white"
+              onClick={() => activeColor && changeWeight(activeColor.id, 1)}
+              type="button"
+            >
+              %-Farbverteilung aendern
+            </button>
+            <button
+              aria-label="Close selected colors"
+              className="h-full px-2 text-lg leading-none text-neutral-400 hover:text-neutral-700"
+              onClick={() => setSelectedPanelOpen(false)}
+              type="button"
+            >
+              x
+            </button>
+          </div>
+
+          <div className="selected-colors-scroll h-40 space-y-2 overflow-y-scroll px-3 py-2">
             {selectedColors.map((color) => (
               <div
-                className={`flex items-center gap-2 text-sm ${
+                className={`flex min-h-6 items-center gap-2 text-sm ${
                   activeId === color.id ? "text-neutral-950" : "text-neutral-500"
                 }`}
                 key={color.id}
@@ -1011,7 +1032,7 @@ export default function Home() {
                   type="button"
                 />
                 <button
-                  className="min-w-0 flex-1 truncate text-left"
+                  className="min-w-0 flex-1 truncate text-left leading-6"
                   onClick={() => setActiveId(color.id)}
                   type="button"
                 >
@@ -1072,7 +1093,7 @@ export default function Home() {
         </section>
       ) : null}
 
-      <div className="absolute bottom-0 left-0 right-0 z-10 h-28 border-t border-neutral-200 bg-white/95 backdrop-blur">
+      <div className="absolute bottom-0 left-0 right-0 z-10 h-32 border-t border-neutral-200 bg-white">
         <button
           aria-label="Confirm color selection"
           className="absolute left-10 top-1/2 z-20 flex h-14 w-14 -translate-y-1/2 items-center justify-center rounded-full bg-orange-500 text-4xl font-light text-white shadow-lg"
@@ -1082,7 +1103,7 @@ export default function Home() {
         </button>
 
         <section
-          className="no-scrollbar absolute bottom-0 left-28 right-4 top-0 flex items-center gap-7 overflow-x-auto overscroll-x-contain scroll-smooth pr-12 md:left-48 md:right-44 md:gap-8"
+          className="no-scrollbar absolute inset-0 flex items-end gap-9 overflow-x-auto overscroll-x-contain scroll-smooth px-7 pb-4 pr-48"
           onWheel={handlePaletteWheel}
           ref={paletteRef}
         >
@@ -1093,12 +1114,12 @@ export default function Home() {
             return (
               <button
                 aria-label={`Use ${option.name}`}
-                className={`relative h-16 w-16 shrink-0 border transition ${
+                className={`relative shrink-0 border transition ${
                   active
-                    ? "border-orange-500 p-1"
+                    ? "h-28 w-28 border-orange-500 bg-white p-2"
                     : selected
-                      ? "border-orange-400"
-                      : "border-transparent hover:border-orange-300"
+                      ? "h-14 w-14 border-orange-400"
+                      : "h-14 w-14 border-transparent hover:border-orange-300"
                 }`}
                 data-color-id={option.id}
                 key={option.id}
@@ -1123,7 +1144,7 @@ export default function Home() {
           })}
         </section>
 
-        <div className="absolute right-2 top-0 hidden h-full w-40 items-center gap-2 border-y border-neutral-200 bg-white/90 py-2 text-sm text-neutral-400 backdrop-blur md:flex">
+        <div className="absolute right-2 top-0 hidden h-8 w-40 items-center gap-2 border-y border-neutral-200 bg-white py-2 text-sm text-neutral-400 md:flex">
           <span className="pl-1 text-xl leading-none">^</span>
           <span>Realvorschau</span>
         </div>
