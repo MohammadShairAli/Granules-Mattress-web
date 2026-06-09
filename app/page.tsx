@@ -69,7 +69,7 @@ type Viewer = {
 const PALETTE: ColorOption[] = [
   { id: "eggshell", name: "Eggshell", ral: "1015", code: "46 2400", hex: "#b9ad6a" },
   { id: "sand", name: "Sand", ral: "1001", code: "46 1600", hex: "#a4874a" },
-  { id: "gold", name: "Gold", ral: "1024", code: "46 3000", hex: "#c99512" },
+  { id: "earth-yellow", name: "Erdgelb", ral: "1006", code: "46 5700", hex: "#c99512" },
   { id: "lime", name: "Lime", ral: "1016", code: "46 3300", hex: "#d7dd1e" },
   { id: "pearl", name: "Pearl", ral: "7035", code: "46 0500", hex: "#c9c9bb" },
   { id: "wheat", name: "Wheat", ral: "1014", code: "46 2500", hex: "#d0c47b" },
@@ -87,6 +87,13 @@ const PALETTE: ColorOption[] = [
   { id: "mint", name: "Mint", ral: "6027", code: "46 9800", hex: "#73a99d" },
   { id: "forest", name: "Forest", ral: "6005", code: "46 9900", hex: "#123f2b" },
   { id: "olive", name: "Olive", ral: "6013", code: "46 9950", hex: "#42602f" },
+  { id: "light-beige", name: "Light Beige", ral: "1013", code: "46 1400", hex: "#d2c9b0" },
+  { id: "ivory", name: "Ivory", ral: "1015", code: "46 2400", hex: "#e4d9b8" },
+  { id: "sun-yellow", name: "Sun Yellow", ral: "1021", code: "46 3100", hex: "#f9d71c" },
+  { id: "ochre", name: "Ochre", ral: "1027", code: "46 2800", hex: "#b38c3d" },
+  { id: "bright-orange", name: "Bright Orange", ral: "2004", code: "46 4200", hex: "#e36b1e" },
+  { id: "signal-red", name: "Signal Red", ral: "3001", code: "46 7100", hex: "#a31e2e" },
+  { id: "turquoise", name: "Turquoise", ral: "6027", code: "", hex: "#4a9c9e" },
 ];
 
 const INITIAL_SELECTION: SelectedColor[] = [];
@@ -141,9 +148,10 @@ function normalDetailShade(normal: Uint8ClampedArray, target: number) {
 
 function colorPreviewGradient(hex: string) {
   return [
-    "radial-gradient(circle at 20% 20%, rgba(255,255,255,.42), transparent 24%)",
-    "radial-gradient(circle at 76% 78%, rgba(0,0,0,.26), transparent 28%)",
-    `linear-gradient(135deg, ${hex} 0%, ${hex} 42%, rgba(255,255,255,.22) 68%, rgba(0,0,0,.2) 100%)`,
+    "radial-gradient(circle at 24% 20%, rgba(255,255,255,.38), transparent 22%)",
+    "radial-gradient(circle at 78% 82%, rgba(0,0,0,.28), transparent 28%)",
+    `linear-gradient(135deg, ${hex}, ${hex})`,
+    `url(${ALBEDO_PATH})`,
   ].join(", ");
 }
 
@@ -162,6 +170,18 @@ function buildGranuleMap(mask: Uint8Array, guide: Uint8Array, size: number) {
   const seeds = new Uint8Array(mask.length);
   const granules = new Uint32Array(mask.length);
   const queue = new Uint32Array(mask.length);
+
+  const neighbors = (index: number): [number, number, number, number] => {
+    const x = index % size;
+    const y = Math.floor(index / size);
+
+    return [
+      y * size + ((x - 1 + size) % size),
+      y * size + ((x + 1) % size),
+      ((y - 1 + size) % size) * size + x,
+      ((y + 1) % size) * size + x,
+    ];
+  };
 
   for (let index = 0; index < mask.length; index += 1) {
     const isGranule = mask[index] >= GRANULE_MASK_THRESHOLD;
@@ -189,18 +209,9 @@ function buildGranuleMap(mask: Uint8Array, guide: Uint8Array, size: number) {
         continue;
       }
 
-      const x = index % size;
-      const y = Math.floor(index / size);
-      const left = x > 0 ? index - 1 : -1;
-      const right = x < size - 1 ? index + 1 : -1;
-      const up = y > 0 ? index - size : -1;
-      const down = y < size - 1 ? index + size : -1;
+      const [left, right, up, down] = neighbors(index);
 
       if (
-        left >= 0 &&
-        right >= 0 &&
-        up >= 0 &&
-        down >= 0 &&
         seeds[left] === 1 &&
         seeds[right] === 1 &&
         seeds[up] === 1 &&
@@ -230,17 +241,8 @@ function buildGranuleMap(mask: Uint8Array, guide: Uint8Array, size: number) {
       const current = queue[head];
       head += 1;
 
-      const x = current % size;
-      const y = Math.floor(current / size);
-      const neighbors = [
-        x > 0 ? current - 1 : -1,
-        x < size - 1 ? current + 1 : -1,
-        y > 0 ? current - size : -1,
-        y < size - 1 ? current + size : -1,
-      ];
-
-      for (const neighbor of neighbors) {
-        if (neighbor < 0 || seeds[neighbor] === 0 || granules[neighbor] !== 0) {
+      for (const neighbor of neighbors(current)) {
+        if (seeds[neighbor] === 0 || granules[neighbor] !== 0) {
           continue;
         }
 
@@ -269,21 +271,8 @@ function buildGranuleMap(mask: Uint8Array, guide: Uint8Array, size: number) {
     const current = queue[head];
     head += 1;
 
-    const x = current % size;
-    const y = Math.floor(current / size);
-    const neighbors = [
-      x > 0 ? current - 1 : -1,
-      x < size - 1 ? current + 1 : -1,
-      y > 0 ? current - size : -1,
-      y < size - 1 ? current + size : -1,
-    ];
-
-    for (const neighbor of neighbors) {
-      if (
-        neighbor < 0 ||
-        foreground[neighbor] === 0 ||
-        granules[neighbor] !== 0
-      ) {
+    for (const neighbor of neighbors(current)) {
+      if (foreground[neighbor] === 0 || granules[neighbor] !== 0) {
         continue;
       }
 
@@ -308,20 +297,8 @@ function buildGranuleMap(mask: Uint8Array, guide: Uint8Array, size: number) {
       const current = queue[head];
       head += 1;
 
-      const x = current % size;
-      const y = Math.floor(current / size);
-      const neighbors = [
-        x > 0 ? current - 1 : -1,
-        x < size - 1 ? current + 1 : -1,
-        y > 0 ? current - size : -1,
-        y < size - 1 ? current + size : -1,
-      ];
-
-      for (const neighbor of neighbors) {
-        if (
-          neighbor < 0 ||
-          granules[neighbor] !== 0
-        ) {
+      for (const neighbor of neighbors(current)) {
+        if (granules[neighbor] !== 0) {
           continue;
         }
 
@@ -617,6 +594,7 @@ function getPercent(color: SelectedColor, colors: SelectedColor[]) {
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cacheRef = useRef<TextureCache | null>(null);
+  const paletteRef = useRef<HTMLElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
   const dragRef = useRef({ dragging: false, x: 0, y: 0 });
   const orbitRef = useRef({ yaw: -0.55, pitch: 0.46 });
@@ -631,7 +609,7 @@ export default function Home() {
   const [selectedColors, setSelectedColors] =
     useState<SelectedColor[]>(INITIAL_SELECTION);
   const [activeId, setActiveId] = useState("");
-  const [status, setStatus] = useState("Loading");
+  const [selectedPanelOpen, setSelectedPanelOpen] = useState(false);
 
   const activeColor = useMemo(
     () => selectedColors.find((color) => color.id === activeId) ?? selectedColors[0],
@@ -690,6 +668,30 @@ export default function Home() {
     selectedRef.current = selectedColors;
     applyTexture(selectedColors);
   }, [applyTexture, selectedColors]);
+
+  useEffect(() => {
+    const palette = paletteRef.current;
+
+    if (!palette || activeId === "") {
+      return;
+    }
+
+    const activeSwatch = palette.querySelector<HTMLElement>(
+      `[data-color-id="${activeId}"]`,
+    );
+
+    if (!activeSwatch) {
+      return;
+    }
+
+    const centeredLeft =
+      activeSwatch.offsetLeft - (palette.clientWidth - activeSwatch.offsetWidth) / 2;
+
+    palette.scrollTo({
+      behavior: "smooth",
+      left: Math.max(0, centeredLeft),
+    });
+  }, [activeId]);
 
   useEffect(() => {
     let active = true;
@@ -823,7 +825,6 @@ export default function Home() {
         autoRotateRef.current.start = performance.now();
         applyTexture(selectedRef.current);
         updateCamera();
-        setStatus("Ready");
 
         const render = (time: number) => {
           if (autoRotateRef.current.active) {
@@ -855,10 +856,8 @@ export default function Home() {
           material.dispose();
           renderer.dispose();
         };
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Unable to load texture";
-        setStatus(message);
+      } catch {
+        return undefined;
       }
     }
 
@@ -887,14 +886,10 @@ export default function Home() {
 
   const removeColor = (id: string) => {
     setSelectedColors((current) => {
-      if (current.length <= 1) {
-        return current;
-      }
-
       const next = current.filter((color) => color.id !== id);
 
       if (activeId === id) {
-        setActiveId(next[0].id);
+        setActiveId(next[0]?.id ?? "");
       }
 
       return next;
@@ -949,16 +944,28 @@ export default function Home() {
     event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
-  return (
-    <main className="relative h-screen overflow-hidden bg-white text-neutral-900">
-      <div className="pointer-events-none absolute right-8 top-4 z-20 hidden gap-5 text-sm text-neutral-300 md:flex">
-        <span>Neu</span>
-        <span>Speichern</span>
-        <span>PDF Export</span>
-        <span>Anfragen</span>
-        <span>Vollbild</span>
-      </div>
+  const handlePaletteWheel = (event: React.WheelEvent<HTMLElement>) => {
+    const palette = paletteRef.current;
 
+    if (!palette) {
+      return;
+    }
+
+    const scrollAmount =
+      Math.abs(event.deltaX) > Math.abs(event.deltaY)
+        ? event.deltaX
+        : event.deltaY;
+
+    if (scrollAmount === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    palette.scrollLeft += scrollAmount;
+  };
+
+  return (
+    <main className="relative h-screen overflow-hidden bg-white">
       <canvas
         ref={canvasRef}
         aria-label="3D mattress texture preview"
@@ -968,69 +975,90 @@ export default function Home() {
         onPointerUp={handlePointerUp}
       />
 
-      <section className="absolute bottom-24 left-0 z-10 w-[400px] max-w-[calc(100vw-16px)] border border-neutral-200 bg-white/95 shadow-sm backdrop-blur">
-        <div className="flex items-center border-b border-neutral-200 text-sm">
-          <div className="flex-1 px-3 py-2 text-neutral-700">
-            Ausgewahlte Farben
-          </div>
-          <button
-            className="bg-orange-500 px-3 py-2 text-white"
-            onClick={() => activeColor && changeWeight(activeColor.id, 1)}
-            type="button"
+      <div className="absolute bottom-24 left-0 z-20 w-48 bg-white text-sm text-neutral-400">
+        <button
+          aria-expanded={selectedPanelOpen}
+          className="flex w-full items-center justify-between border-y border-neutral-200 px-2 py-2 text-left"
+          onClick={() => setSelectedPanelOpen((open) => !open)}
+          type="button"
+        >
+          <span>Ausgewaehlte Farben</span>
+          <span
+            className={`text-xl leading-none transition-transform ${
+              selectedPanelOpen ? "rotate-180" : ""
+            }`}
           >
-            %-Farbverteilung andern
-          </button>
-          <button
-            aria-label="Close color panel"
-            className="px-3 py-2 text-lg leading-none text-neutral-400"
-            type="button"
-          >
-            x
-          </button>
-        </div>
+            ^
+          </span>
+        </button>
+      </div>
 
-        <div className="min-h-32 space-y-3 px-3 py-5">
-          {selectedColors.map((color) => (
-            <div
-              className={`flex items-center gap-2 text-sm ${
-                activeId === color.id ? "text-neutral-950" : "text-neutral-500"
-              }`}
-              key={color.id}
-            >
-              <button
-                aria-label={`Select ${color.name}`}
-                className="h-4 w-4 shrink-0"
-                onClick={() => setActiveId(color.id)}
-                style={{ backgroundColor: color.hex }}
-                type="button"
-              />
-              <button
-                className="min-w-0 flex-1 truncate text-left"
-                onClick={() => setActiveId(color.id)}
-                type="button"
-              >
-                <span className="font-semibold">{color.name}</span>
-                <span className="text-neutral-400">
-                  {" "}
-                  | RAL: {color.ral} | Code: {color.code} | {color.weight}x (
-                  {getPercent(color, selectedColors)}%)
-                </span>
-              </button>
-              <button
-                aria-label={`Remove ${color.name}`}
-                className="px-2 text-lg leading-none text-neutral-400 hover:text-orange-500"
-                onClick={() => removeColor(color.id)}
-                type="button"
-              >
-                x
-              </button>
+      {selectedPanelOpen && selectedColors.length > 0 ? (
+        <section className="absolute bottom-32 left-0 z-30 w-[420px] max-w-[calc(100vw-20px)] border border-neutral-200 bg-white shadow-sm">
+          <div className="flex h-9 items-center border-b border-neutral-200 text-sm">
+            <div className="min-w-0 flex-1 px-2 text-neutral-700">
+              Ausgewaehlte Farben
             </div>
-          ))}
-        </div>
-      </section>
+            <button
+              className="h-full bg-orange-500 px-3 text-white"
+              onClick={() => activeColor && changeWeight(activeColor.id, 1)}
+              type="button"
+            >
+              %-Farbverteilung aendern
+            </button>
+            <button
+              aria-label="Close selected colors"
+              className="h-full px-2 text-lg leading-none text-neutral-400 hover:text-neutral-700"
+              onClick={() => setSelectedPanelOpen(false)}
+              type="button"
+            >
+              x
+            </button>
+          </div>
+
+          <div className="selected-colors-scroll h-40 space-y-2 overflow-y-scroll px-3 py-2">
+            {selectedColors.map((color) => (
+              <div
+                className={`flex min-h-6 items-center gap-2 text-sm ${
+                  activeId === color.id ? "text-neutral-950" : "text-neutral-500"
+                }`}
+                key={color.id}
+              >
+                <button
+                  aria-label={`Select ${color.name}`}
+                  className="h-4 w-4 shrink-0"
+                  onClick={() => setActiveId(color.id)}
+                  style={{ backgroundColor: color.hex }}
+                  type="button"
+                />
+                <button
+                  className="min-w-0 flex-1 truncate text-left leading-6"
+                  onClick={() => setActiveId(color.id)}
+                  type="button"
+                >
+                  <span className="font-semibold">{color.name}</span>
+                  <span className="text-neutral-400">
+                    {" "}
+                    | RAL: {color.ral} | Code: {color.code} | {color.weight}x (
+                    {getPercent(color, selectedColors)}%)
+                  </span>
+                </button>
+                <button
+                  aria-label={`Remove ${color.name}`}
+                  className="px-2 text-lg leading-none text-neutral-400 hover:text-orange-500"
+                  onClick={() => removeColor(color.id)}
+                  type="button"
+                >
+                  x
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {activeColor ? (
-        <section className="absolute bottom-36 left-1/2 z-20 w-44 -translate-x-1/2 border border-neutral-200 bg-white text-center shadow-lg">
+        <section className="absolute bottom-36 left-1/2 z-30 w-48 -translate-x-1/2 border border-neutral-200 bg-white text-center shadow-md">
           <div className="px-3 py-3">
             <p className="text-sm font-semibold text-neutral-600">
               {activeColor.name}
@@ -1065,50 +1093,61 @@ export default function Home() {
         </section>
       ) : null}
 
-      <div className="absolute bottom-8 left-12 z-20 flex h-16 w-16 items-center justify-center rounded-full bg-orange-500 text-4xl font-light text-white shadow-lg">
-        &#10003;
-      </div>
+      <div className="absolute bottom-0 left-0 right-0 z-10 h-32 border-t border-neutral-200 bg-white">
+        <button
+          aria-label="Confirm color selection"
+          className="absolute left-10 top-1/2 z-20 flex h-14 w-14 -translate-y-1/2 items-center justify-center rounded-full bg-orange-500 text-4xl font-light text-white shadow-lg"
+          type="button"
+        >
+          &#10003;
+        </button>
 
-      <section className="no-scrollbar absolute bottom-0 left-0 right-0 z-10 flex h-24 items-end gap-8 overflow-x-auto border-t border-neutral-200 bg-white/90 px-36 pb-3 backdrop-blur">
-        {PALETTE.map((option) => {
-          const selected = selectedIds.has(option.id);
-          const active = activeId === option.id;
+        <section
+          className="no-scrollbar absolute inset-0 flex items-end gap-9 overflow-x-auto overscroll-x-contain scroll-smooth px-7 pb-4 pr-48"
+          onWheel={handlePaletteWheel}
+          ref={paletteRef}
+        >
+          {PALETTE.map((option) => {
+            const selected = selectedIds.has(option.id);
+            const active = activeId === option.id;
 
-          return (
-            <button
-              aria-label={`Use ${option.name}`}
-              className={`relative h-14 w-14 shrink-0 border transition ${
-                active
-                  ? "h-32 w-32 border-orange-500 p-2"
-                  : selected
-                    ? "border-orange-400"
-                    : "border-neutral-200 hover:border-orange-300"
-              }`}
-              key={option.id}
-              onClick={() => addOrSelectColor(option)}
-              type="button"
-            >
-              <span
-                className="block h-full w-full"
-                style={{
-                  backgroundColor: option.hex,
-                  backgroundImage: colorPreviewGradient(option.hex),
-                }}
-              />
-              {active ? (
-                <span className="absolute -top-3 left-1/2 h-2 w-16 -translate-x-1/2 bg-orange-500" />
-              ) : null}
-            </button>
-          );
-        })}
-      </section>
+            return (
+              <button
+                aria-label={`Use ${option.name}`}
+                className={`relative shrink-0 border transition ${
+                  active
+                    ? "h-28 w-28 border-orange-500 bg-white p-2"
+                    : selected
+                      ? "h-14 w-14 border-orange-400"
+                      : "h-14 w-14 border-transparent hover:border-orange-300"
+                }`}
+                data-color-id={option.id}
+                key={option.id}
+                onClick={() => addOrSelectColor(option)}
+                type="button"
+              >
+                <span
+                  className="block h-full w-full"
+                  style={{
+                    backgroundColor: option.hex,
+                    backgroundImage: colorPreviewGradient(option.hex),
+                    backgroundBlendMode: "screen, multiply, multiply, luminosity",
+                    backgroundPosition: "center, center, center, center",
+                    backgroundSize: "100% 100%, 100% 100%, 100% 100%, 260% 260%",
+                  }}
+                />
+                {active ? (
+                  <span className="absolute -top-3 left-1/2 h-1.5 w-14 -translate-x-1/2 bg-orange-500" />
+                ) : null}
+              </button>
+            );
+          })}
+        </section>
 
-      <div className="absolute bottom-28 right-2 z-10 hidden w-40 border-y border-neutral-200 py-2 text-sm text-neutral-400 md:block">
-        Realvorschau
-      </div>
-
-      <div className="absolute left-4 top-4 z-10 rounded-full bg-white/80 px-3 py-1 text-xs text-neutral-400 shadow-sm">
-        {status}
+        <div className="absolute right-2 top-0 hidden h-8 w-40 items-center gap-2 border-y border-neutral-200 bg-white py-2 text-sm text-neutral-400 md:flex">
+          <span className="pl-1 text-xl leading-none">^</span>
+          <span>Realvorschau</span>
+        </div>
       </div>
     </main>
   );
