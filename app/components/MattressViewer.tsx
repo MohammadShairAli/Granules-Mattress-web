@@ -145,11 +145,11 @@ export function MattressViewer({ selectedColors }: MattressViewerProps) {
         keyLight.shadow.mapSize.set(2048, 2048);
         keyLight.shadow.bias = -0.0002;
         keyLight.shadow.normalBias = 0.02;
-        scene.add(keyLight);
+        // scene.add(keyLight);
 
         const fillLight = new THREE.DirectionalLight("#ffffff", 1.6);
         fillLight.position.set(3, 2.5, 2.2);
-        scene.add(fillLight);
+        // scene.add(fillLight);
 
         const material = new THREE.MeshStandardMaterial({
           color: "#ffffff",
@@ -194,7 +194,7 @@ export function MattressViewer({ selectedColors }: MattressViewerProps) {
         );
         shadow.position.z = -0.01;
         shadow.receiveShadow = true;
-        scene.add(shadow);
+        // scene.add(shadow);
 
         const resize = () => {
           const rect = renderCanvas.getBoundingClientRect();
