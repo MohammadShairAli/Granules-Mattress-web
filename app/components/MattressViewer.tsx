@@ -10,9 +10,9 @@ import {
   AUTO_ROTATE_SPEED,
   CAMERA_RADIUS,
   GRANULE_GUIDE_PATH,
+  GRANULE_TEXTURE_REPEAT,
   MODEL_PATH,
   NORMAL_PATH,
-  ROUGHNESS_PATH,
 } from "../lib/mattress-assets";
 import {
   applyMaterialToModel,
@@ -137,15 +137,15 @@ export function MattressViewer({ selectedColors }: MattressViewerProps) {
         const camera = new THREE.PerspectiveCamera(34, 1, 0.01, 100);
         camera.up.set(0, 0, 1);
 
-        scene.add(new THREE.HemisphereLight("#ffffff", "#d5d5d5", 2.7));
+        scene.add(new THREE.HemisphereLight("#ffffff", "#d5d5d5", 1.35));
 
         const keyLight = new THREE.DirectionalLight("#ffffff", 4.2);
         keyLight.position.set(-1.8, -3.2, 4.2);
-        keyLight.castShadow = true;
+        // keyLight.castShadow = true;
         keyLight.shadow.mapSize.set(2048, 2048);
         keyLight.shadow.bias = -0.0002;
         keyLight.shadow.normalBias = 0.02;
-        // scene.add(keyLight);
+        scene.add(keyLight);
 
         const fillLight = new THREE.DirectionalLight("#ffffff", 1.6);
         fillLight.position.set(3, 2.5, 2.2);
@@ -153,32 +153,30 @@ export function MattressViewer({ selectedColors }: MattressViewerProps) {
 
         const material = new THREE.MeshStandardMaterial({
           color: "#ffffff",
-          metalness: 0.02,
-          roughness: 0.72,
+          metalness: 0,
+          roughness: 1,
         });
 
         const textureLoader = new THREE.TextureLoader();
         const gltfLoader = new GLTFLoader();
-        const [model, normalMap, roughnessMap, depthMap] = await Promise.all([
+        const [model, normalMap, depthMap] = await Promise.all([
           gltfFromSource(gltfLoader, MODEL_PATH),
           textureFromSource(textureLoader, NORMAL_PATH),
-          textureFromSource(textureLoader, ROUGHNESS_PATH),
           textureFromSource(textureLoader, GRANULE_GUIDE_PATH),
         ]);
 
-        for (const supportMap of [normalMap, roughnessMap, depthMap]) {
+        for (const supportMap of [normalMap, depthMap]) {
           supportMap.flipY = false;
           supportMap.wrapS = THREE.RepeatWrapping;
           supportMap.wrapT = THREE.RepeatWrapping;
+          supportMap.repeat.set(GRANULE_TEXTURE_REPEAT, GRANULE_TEXTURE_REPEAT);
           supportMap.anisotropy = renderer.capabilities.getMaxAnisotropy();
         }
 
         normalMap.colorSpace = THREE.NoColorSpace;
-        roughnessMap.colorSpace = THREE.NoColorSpace;
         depthMap.colorSpace = THREE.NoColorSpace;
         material.normalMap = normalMap;
         material.normalScale.set(0.45, 0.45);
-        material.roughnessMap = roughnessMap;
         material.bumpMap = depthMap;
         material.bumpScale = 0.04;
 
@@ -213,7 +211,6 @@ export function MattressViewer({ selectedColors }: MattressViewerProps) {
           camera,
           cleanup: () => {
             normalMap.dispose();
-            roughnessMap.dispose();
             depthMap.dispose();
             model.traverse((child) => {
               if (child instanceof THREE.Mesh) {

@@ -8,7 +8,6 @@ import {
   type ColorOption,
   type SelectedColor,
 } from "../data/colors";
-import { ALBEDO_PATH } from "../lib/mattress-assets";
 
 type ColorBarProps = {
   activeColor: SelectedColor | undefined;
@@ -20,13 +19,10 @@ type ColorBarProps = {
   removeColor: (id: string) => void;
 };
 
-function colorPreviewGradient(hex: string) {
-  return [
-    "radial-gradient(circle at 24% 20%, rgba(255,255,255,.38), transparent 22%)",
-    "radial-gradient(circle at 78% 82%, rgba(0,0,0,.28), transparent 28%)",
-    `linear-gradient(135deg, ${hex}, ${hex})`,
-    `url(${ALBEDO_PATH})`,
-  ].join(", ");
+function colorMeta(color: Pick<ColorOption, "code" | "ral">) {
+  return [color.ral ? `RAL: ${color.ral}` : "", `Code: ${color.code}`]
+    .filter(Boolean)
+    .join(" | ");
 }
 
 export function ColorBar({
@@ -152,7 +148,7 @@ export function ColorBar({
                   <span className="font-semibold">{color.name}</span>
                   <span className="text-neutral-400">
                     {" "}
-                    | RAL: {color.ral} | Code: {color.code} | {color.weight}x (
+                    | {colorMeta(color)} | {color.weight}x (
                     {getPercent(color, selectedColors)}%)
                   </span>
                 </button>
@@ -177,7 +173,7 @@ export function ColorBar({
               {activeColor.name}
             </p>
             <p className="mt-1 border-b border-neutral-200 pb-2 text-xs text-neutral-400">
-              RAL {activeColor.ral} | Code: {activeColor.code}
+              {colorMeta(activeColor)}
             </p>
             <p className="pt-2 text-xs font-medium text-orange-500">Anteil(e)</p>
             <div className="mt-1 flex items-center justify-between">
@@ -243,10 +239,9 @@ export function ColorBar({
                   className="block h-full w-full"
                   style={{
                     backgroundColor: option.hex,
-                    backgroundImage: colorPreviewGradient(option.hex),
-                    backgroundBlendMode: "screen, multiply, multiply, luminosity",
-                    backgroundPosition: "center, center, center, center",
-                    backgroundSize: "100% 100%, 100% 100%, 100% 100%, 260% 260%",
+                    backgroundImage: `url("${option.previewImage}")`,
+                    backgroundPosition: "center",
+                    backgroundSize: "cover",
                   }}
                 />
                 {active ? (

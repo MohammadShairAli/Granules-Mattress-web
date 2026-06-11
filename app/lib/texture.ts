@@ -4,6 +4,7 @@ import { INITIAL_SELECTION, type SelectedColor } from "../data/colors";
 import {
   ALBEDO_PATH,
   GRANULE_GUIDE_PATH,
+  GRANULE_TEXTURE_REPEAT,
   NORMAL_PATH,
 } from "./mattress-assets";
 import { buildGranuleMap } from "./granules";
@@ -124,8 +125,7 @@ export async function createTextureCache() {
     throw new Error("Canvas is not available in this browser.");
   }
 
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = "high";
+  context.imageSmoothingEnabled = false;
   context.drawImage(guideImage, 0, 0, size, size);
   const guideData = context.getImageData(0, 0, size, size);
   const guide = new Uint8Array(size * size);
@@ -146,6 +146,9 @@ export async function createTextureCache() {
   }
 
   const granules = buildGranuleMap(mask, guide, size);
+
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
 
   context.clearRect(0, 0, size, size);
   context.drawImage(normalImage, 0, 0, size, size);
@@ -168,6 +171,7 @@ export async function createTextureCache() {
   texture.magFilter = THREE.LinearFilter;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(GRANULE_TEXTURE_REPEAT, GRANULE_TEXTURE_REPEAT);
 
   return {
     canvas,
