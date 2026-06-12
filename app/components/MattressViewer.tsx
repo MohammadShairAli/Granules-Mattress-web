@@ -149,7 +149,7 @@ export function MattressViewer({ selectedColors }: MattressViewerProps) {
 
         const fillLight = new THREE.DirectionalLight("#ffffff", 1.6);
         fillLight.position.set(3, 2.5, 2.2);
-        // scene.add(fillLight);
+        scene.add(fillLight);
 
         const material = new THREE.MeshStandardMaterial({
           color: "#ffffff",
